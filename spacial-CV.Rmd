@@ -1,0 +1,291 @@
+---
+title: "spacialpredict-correcoes"
+author: "NAR"
+date: "12/2/2020"
+output: html_document
+---
+
+
+MODELO INTERNO
+```{r}
+library(raster)
+library (sf)
+require(stats)
+require(caret)
+
+
+setwd("C:/Users/nicol/Desktop/plataformas/spacialpredict")
+list.files()
+data<-read.csv("dados_reaisUTM.csv")
+pontos <- st_as_sf(data,
+                       coords = c('X', 'Y'),
+                       crs = "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+
+
+#PLANET<-stack("simul_clayFIELDSPEC.tif")
+#names(PLANET)<- c("PC1A", "PC2A", "PC3A")
+#names(PLANET)<- c("SYSI.L8.1", "SYSI.L8.2", "SYSI.L8.3", "SYSI.L8.4", "SYSI.L8.5", "SYSI.L8.6")
+#names(PLANET)<- c("SYSI.S2.1", "SYSI.S2.2", "SYSI.S2.3", "SYSI.S2.4", "SYSI.S2.5", "SYSI.S2.6", "SYSI.S2.7", "SYSI.S2.8", "SYSI.S2.9")
+#names(PLANET)<- c("Planet.SYSI1", "Planet.SYSI2", "Planet.SYSI3","Planet.SYSI4")
+
+
+sensordata<- PLANET   
+#summary(sensordata)
+
+plot(sensordata)
+
+```
+
+
+
+```{r}
+
+library(caret)
+library(Cubist)
+
+eval.stats <- function(obs, pred){
+    R2 <- summary(lm(pred~obs))$r.squared[1]
+    RMSE <- sqrt(mean((pred-obs)^2))
+    RPIQ <- (quantile(obs)[3]-quantile(obs)[2])/RMSE
+    res <- round(c(R2, RMSE, RPIQ), 2)
+    names(res) <- c( "R2", "RMSE", "RPIQ")
+    return(res) }
+
+K<-100
+
+trainpred<-matrix(nrow = 52, ncol = K)
+resulttrain<-matrix(nrow = 3, ncol = K)
+impcov<-matrix(nrow = 3, ncol = K )
+
+z_preds<-stack()
+
+
+for(i in 1:K){
+ 
+
+train_spectra<-as.data.frame(data)
+train_spectra2<-as.data.frame(train_spectra [38:40])
+
+tcontrol<- trainControl(method = "cv", number = 10)
+#tcontrol<- trainControl(method = "LOOCV")
+
+cal_rows <- sample(nrow(train_spectra2), nrow(train_spectra2), replace = TRUE)
+
+cubist_fit <- train(x = train_spectra2[cal_rows,],
+                    y = train_spectra$Clay[cal_rows],
+                    method = "cubist",
+                    trControl = tcontrol)
+var<-varImp(cubist_fit)
+var1<-var$importance$Overall
+
+impcov[,i]<-t(var1)
+
+clay_train <- predict(cubist_fit, newdata = train_spectra2)
+trainpred[,i]<-clay_train
+
+#treinamento = eval.stats(cubist_fit$pred$pred, cubist_fit$pred$obs)
+treinamento2 = eval.stats(train_spectra$Clay,clay_train)
+
+
+resulttrain[,i]<-treinamento2
+
+
+#z_preds<- stack(z_preds, raster::predict(sensordata, cubist_fit))
+
+}
+
+#plot(z_preds)
+
+
+write.csv(trainpred, "trainpred-FIELD.csv")
+write.csv(resulttrain, "resulttrain-FIELD.csv")
+write.csv(impcov, "impcov-FIELD.csv")
+
+
+```
+
+
+
+```{r}
+setwd("C:/Users/nicol/Desktop/plataformas/spacialpredict")
+list.files()
+z_preds <- stack("simul_clayFIELDSPEC.tif")
+
+
+z_mean <- raster::calc(z_preds, mean)
+names(z_mean) <- "Mean"
+#######
+
+z_interval <- raster::calc(z_preds, 
+                           function(x) {
+                             quantile(x,
+                                      probs = c(0.05, 0.95),
+                                      na.rm = TRUE)
+                             })
+names(z_interval) <- c("lower", "upper")
+plot(z_interval)
+
+
+
+plot(z_mean, main = "Clay mean")
+
+#############
+
+z_pi_width <- z_interval[[2]] - z_interval[[1]]
+plot(z_pi_width, main = "90-percent prediction interval width")
+names(z_pi_width) <- "90PI"
+
+#################
+
+final<-stack(z_mean, z_pi_width)
+plot(final)
+
+
+writeRaster(z_mean, "raster-MEAN-FIELD.tif")
+writeRaster(z_pi_width, "raster-90-FIELD.tif")
+
+final2<-stack(z_mean, z_pi_width )
+plot(final2)
+writeRaster(final2, "rasterAISA2.tif")
+
+####################################
+
+
+setwd("C:/Users/nicol/Desktop/plataformas/spacialpredict")
+list.files()
+teste<-stack("raster-PLANET.tif")
+
+
+plot(teste)
+```
+
+
+
+```{r}
+setwd("C:/Users/nicol/Desktop/plataformas/spacialpredict/hist")
+list.files() 
+z_interval1 <- stack("raster-MEAN-AISA.tif", "raster-90-AISA.tif")
+names(z_interval1) <- c( "mean", "90% PI")
+z_interval9 <- stack("MEAN-FIELD-RECORTADO.tif", "90-FIELD-RECORTADO.tif")
+names(z_interval9) <- c ( "mean", "90% PI")
+z_interval7 <- stack("raster-MEAN-PLANET.tif", "raster-90-PLANET.tif")
+names(z_interval7) <- c( "mean", "90% PI")
+z_interval5 <- stack("raster-MEAN-land.tif", "raster-90-land.tif")
+names(z_interval5) <- c( "mean", "90% PI")
+z_interval3 <- stack("raster-MEAN-SENTINEL.tif", "raster-90-SENTINEL.tif")
+names(z_interval3) <- c( "mean", "90% PI")
+
+
+
+
+
+AISA.df <- as.data.frame(z_interval1)
+AISA.df <- AISA.df[complete.cases(AISA.df),]
+name <- "D"
+AISA.df$name <- name
+
+
+S2MSI.df <- as.data.frame(z_interval3)
+S2MSI.df <- S2MSI.df[complete.cases(S2MSI.df),]
+name1 <- "B"
+S2MSI.df$name <- name1
+
+L8OLI.df <- as.data.frame(z_interval5)
+L8OLI.df <- L8OLI.df[complete.cases(L8OLI.df),]
+name2 <- "A"
+L8OLI.df$name <- name2
+
+Planet.df <- as.data.frame(z_interval7)
+Planet.df <- Planet.df[complete.cases(Planet.df),]
+name3 <- "C"
+Planet.df$name <- name3
+
+
+FieldSpec.df <- as.data.frame(z_interval9)
+FieldSpec.df <- FieldSpec.df[complete.cases(FieldSpec.df),]
+name4 <- "E"
+FieldSpec.df$name <- name4
+
+
+require(reshape)
+
+AISA.df.mean <- melt(AISA.df)
+S2MSI.df.mean <- melt(S2MSI.df)
+L8OLI.df.mean <- melt(L8OLI.df)
+Planet.df.mean <- melt(Planet.df)
+FieldSpec.df.mean <- melt(FieldSpec.df)
+str(FieldSpec.df.mean)
+
+
+AISA.mean <- AISA.df.mean[1:777400,]
+summary(AISA.mean)
+
+S2MSI.mean <- S2MSI.df.mean[1:2004,]
+summary(S2MSI.mean)
+
+L8OLI.mean <- L8OLI.df.mean[1:984,]
+summary(L8OLI.mean)
+
+Planet.mean <- Planet.df.mean[1:87156,]
+summary(Planet.mean)
+
+FieldSpec.mean <- FieldSpec.df.mean[1:32483,]
+summary(FieldSpec.mean)
+
+MEAN <- rbind(L8OLI.mean,S2MSI.mean,  Planet.mean, AISA.mean, FieldSpec.mean)
+summary(MEAN)
+str(MEAN)
+
+
+#ggplot(MEAN, aes(value, fill = name)) + geom_boxplot()
+#ggplot(MEAN, aes(value)) + 
+  #geom_histogram(alpha = 0.4, aes(y = ..density..)) + facet_wrap(~name)
+
+
+
+AISA.PI <- AISA.df.mean[777401:1554800,]
+summary(AISA.PI)
+
+S2MSI.PI <- S2MSI.df.mean[2005:4008,]
+summary(S2MSI.PI)
+
+L8OLI.PI <- L8OLI.df.mean[985:1968,]
+summary(L8OLI.PI)
+
+Planet.PI <- Planet.df.mean[89157:178312,]
+summary(Planet.PI)
+
+FieldSpec.PI <- FieldSpec.df.mean[32484:64966,]
+summary(FieldSpec.PI)
+
+
+PI <- rbind(L8OLI.PI,S2MSI.PI,  Planet.PI, AISA.PI, FieldSpec.PI)
+summary(PI)
+str(PI)
+
+#ggplot(PI, aes(value, name, fill = name)) + geom_boxplot()
+#ggplot(PI, aes(value)) + 
+  #geom_histogram(alpha = 0.4, aes(y = ..density..)) + facet_wrap(~name)
+#PI$variable <- "90PI"
+
+mean.PI <- rbind(MEAN, PI)
+mean.PI$Sensor <- mean.PI$name
+#mean.PI$name <- factor(mean.PI$name,
+                 #      levels = c('Sentinel2-MSI', "PlanetScope", "AISA-FENIX", #"FieldSpec",'Landsat8-OLI'),ordered = TRUE)
+#ggplot(PI, aes(value, name, fill = name)) + geom_boxplot()
+
+windowsFonts(Times=windowsFont("Times New Roman"))
+
+setwd("C:/Users/nicol/Desktop/plataformas/spacialpredict/hist")
+tiff("boxplot_novo_interno.tif", width = 2500, height=1500, res=300)
+ggplot(mean.PI, aes(value, Sensor, fill = Sensor)) + geom_boxplot(alpha = 0.4) + facet_wrap(~variable) + theme_bw() + 
+  xlab(expression(paste("Clay content (g ", kg^-1, ")")))+ ylab("Sensors") + 
+  theme(axis.text.x = element_text(size=12, colour="black"))+
+  theme(axis.text.y = element_text(size=12, colour="black")) +
+  theme(axis.title.x = element_text(size=12, face="bold", colour="black")) +
+  theme(axis.title.y = element_text(size=12, face="bold", colour="black")) + theme(legend.position = "none")
+dev.off() 
+
+```
+
+
